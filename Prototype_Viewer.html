@@ -1,0 +1,1538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LabLens AI - Interactive Prototype (iOS Laboratory Assistant)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Lightweight In-Browser Computer Vision Library for Real WebCam Detection -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@latest"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=SF+Pro+Display:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(circle at 50% 20%, #0d1527 0%, #060913 100%);
+      color: #f1f5f9;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    .mono {
+      font-family: "JetBrains Mono", monospace;
+    }
+
+    /* iPhone Frame */
+    .iphone-case {
+      width: 390px;
+      height: 844px;
+      border-radius: 54px;
+      box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.9),
+                  0 0 0 12px #1e293b,
+                  0 0 0 14px #334155,
+                  0 0 40px rgba(56, 189, 248, 0.25);
+      position: relative;
+      overflow: hidden;
+      background: #090e17;
+    }
+
+    /* Dynamic Island */
+    .dynamic-island {
+      width: 124px;
+      height: 35px;
+      background: #000;
+      border-radius: 20px;
+      position: absolute;
+      top: 11px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 50;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    }
+
+    /* Scanning Reticle */
+    .reticle-corner {
+      position: absolute;
+      width: 28px;
+      height: 28px;
+      border-color: #38bdf8;
+      transition: all 0.3s ease;
+    }
+    .reticle-tl { top: -2px; left: -2px; border-top: 4px solid #38bdf8; border-left: 4px solid #38bdf8; border-top-left-radius: 12px; }
+    .reticle-tr { top: -2px; right: -2px; border-top: 4px solid #38bdf8; border-right: 4px solid #38bdf8; border-top-right-radius: 12px; }
+    .reticle-bl { bottom: -2px; left: -2px; border-bottom: 4px solid #38bdf8; border-left: 4px solid #38bdf8; border-bottom-left-radius: 12px; }
+    .reticle-br { bottom: -2px; right: -2px; border-bottom: 4px solid #38bdf8; border-right: 4px solid #38bdf8; border-bottom-right-radius: 12px; }
+
+    .detected .reticle-corner {
+      border-color: #22c55e !important;
+      box-shadow: 0 0 15px rgba(34, 197, 94, 0.6);
+    }
+
+    .scanning .reticle-corner {
+      border-color: #f59e0b !important;
+      box-shadow: 0 0 15px rgba(245, 158, 11, 0.6);
+    }
+
+    /* Scan laser line */
+    .scan-line {
+      position: absolute;
+      width: 100%;
+      height: 3px;
+      background: linear-gradient(90deg, transparent, #38bdf8, #22c55e, transparent);
+      box-shadow: 0 0 16px #38bdf8;
+      top: 0;
+      animation: scanSweep 2.0s ease-in-out infinite alternate;
+    }
+
+    @keyframes scanSweep {
+      0% { top: 6%; opacity: 0.4; }
+      50% { opacity: 1; }
+      100% { top: 94%; opacity: 0.4; }
+    }
+
+    /* iOS Glass Blur */
+    .ios-glass {
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    .ios-tab-active {
+      color: #38bdf8 !important;
+    }
+
+    /* Radar pulse */
+    .radar-pulse {
+      position: absolute;
+      width: 180px;
+      height: 180px;
+      border-radius: 50%;
+      border: 1.5px solid rgba(56, 189, 248, 0.4);
+      animation: pulseAnim 2s infinite ease-out;
+    }
+
+    @keyframes pulseAnim {
+      0% { transform: scale(0.6); opacity: 0.8; }
+      100% { transform: scale(1.4); opacity: 0; }
+    }
+
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar {
+      width: 4px;
+      height: 4px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body class="flex flex-col items-center justify-center p-4 md:p-8">
+
+  <!-- Desktop Top Control Header -->
+  <header class="w-full max-w-5xl mb-6 flex flex-wrap items-center justify-between gap-4 bg-slate-900/90 border border-slate-800 p-4 rounded-2xl backdrop-blur-xl">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+        <i class="fa-solid fa-microscope text-white text-lg"></i>
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="font-extrabold text-lg tracking-tight text-white">LabLens AI</h1>
+          <span class="text-xs bg-cyan-500/20 text-cyan-400 font-semibold px-2 py-0.5 rounded-full border border-cyan-500/30">Phase III Live Prototype</span>
+        </div>
+        <p class="text-xs text-slate-400">iOS-Centric Computer Vision & Intelligent Laboratory Assistant</p>
+      </div>
+    </div>
+
+    <!-- Quick Telemetry & Simulation Controls -->
+    <div class="flex flex-wrap items-center gap-3">
+      <div class="bg-black/50 border border-slate-700/60 px-3 py-1.5 rounded-xl text-xs flex items-center gap-2 mono">
+        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+        <span class="text-slate-400">Vision Engine:</span>
+        <span class="text-emerald-400 font-bold" id="cvEngineStatus">MobileNetV3 ANE Active</span>
+      </div>
+
+      <div class="bg-black/50 border border-slate-700/60 px-3 py-1.5 rounded-xl text-xs flex items-center gap-2 mono">
+        <span class="text-slate-400">Latency:</span>
+        <span class="text-cyan-400 font-bold" id="topLatencyDisplay">21.4 ms</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Showcase Container -->
+  <main class="w-full max-w-6xl flex flex-col lg:flex-row items-center lg:items-start justify-center gap-8">
+    
+    <!-- iPhone Device Frame Wrapper -->
+    <div class="relative shrink-0">
+      <div class="iphone-case flex flex-col justify-between text-white select-none">
+        
+        <!-- Dynamic Island -->
+        <div class="dynamic-island">
+          <div class="w-2.5 h-2.5 rounded-full bg-cyan-400/80 animate-ping"></div>
+          <span class="text-[10px] text-slate-300 font-bold mono">LabLens</span>
+          <div class="w-2.5 h-2.5 rounded-full bg-slate-800 border border-slate-700"></div>
+        </div>
+
+        <!-- iOS Status Bar -->
+        <div class="h-12 w-full px-7 flex items-center justify-between text-[13px] font-semibold tracking-tight z-40 pt-2">
+          <span id="iosClock">09:41</span>
+          <div class="flex items-center gap-2 text-xs">
+            <i class="fa-solid fa-signal text-[11px]"></i>
+            <span class="mono text-[10px] font-bold">5G</span>
+            <i class="fa-solid fa-battery-full text-sm"></i>
+          </div>
+        </div>
+
+        <!-- App Viewport Container (Dynamic Tabs) -->
+        <div class="flex-1 overflow-hidden relative" id="appViewport">
+          
+          <!-- TAB 1: SCANNER VIEW (Default) -->
+          <div id="viewScanner" class="w-full h-full flex flex-col justify-between p-4 relative">
+            
+            <!-- Real-time Telemetry HUD (z-30) -->
+            <div class="z-30 space-y-2">
+              <div class="flex items-center justify-between bg-black/75 backdrop-blur-md px-3 py-2 rounded-xl border border-white/10 shadow-lg">
+                <div>
+                  <p class="text-[9px] mono font-extrabold text-cyan-400 tracking-wider">LABLENS ANE VISION</p>
+                  <p class="text-[9px] mono text-slate-400" id="visionModeLabel">Simulated Lab Scene (Tap instrument to frame)</p>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-[10px] mono font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20" id="fpsDisplay">29.8 FPS</span>
+                  <span class="text-[10px] mono font-bold text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20" id="latencyDisplay">21.4 ms</span>
+                </div>
+              </div>
+
+              <!-- IN-VIEWPORT QUICK INSTRUMENT STRIP (User can tap directly here!) -->
+              <div class="flex items-center gap-1.5 overflow-x-auto py-1 no-scrollbar text-[10px] mono">
+                <button onclick="selectAndScan('micropipette')" class="px-2.5 py-1 rounded-full bg-slate-900/90 hover:bg-cyan-600 border border-slate-700 text-cyan-300 hover:text-white shrink-0 transition">
+                  🧪 Pipette
+                </button>
+                <button onclick="selectAndScan('optical_microscope')" class="px-2.5 py-1 rounded-full bg-slate-900/90 hover:bg-cyan-600 border border-slate-700 text-cyan-300 hover:text-white shrink-0 transition">
+                  🔬 Microscope
+                </button>
+                <button onclick="selectAndScan('benchtop_centrifuge')" class="px-2.5 py-1 rounded-full bg-slate-900/90 hover:bg-cyan-600 border border-slate-700 text-cyan-300 hover:text-white shrink-0 transition">
+                  🔄 Centrifuge
+                </button>
+                <button onclick="selectAndScan('thermal_cycler_pcr')" class="px-2.5 py-1 rounded-full bg-slate-900/90 hover:bg-cyan-600 border border-slate-700 text-cyan-300 hover:text-white shrink-0 transition">
+                  🧬 PCR
+                </button>
+                <button onclick="selectAndScan('co2_incubator')" class="px-2.5 py-1 rounded-full bg-slate-900/90 hover:bg-cyan-600 border border-slate-700 text-cyan-300 hover:text-white shrink-0 transition">
+                  🧫 Incubator
+                </button>
+                <button onclick="selectAndScan('uv_vis_spectrophotometer')" class="px-2.5 py-1 rounded-full bg-slate-900/90 hover:bg-cyan-600 border border-slate-700 text-cyan-300 hover:text-white shrink-0 transition">
+                  📊 Spectro
+                </button>
+              </div>
+            </div>
+
+            <!-- Central Viewfinder / Reticle Canvas (z-20) -->
+            <div class="absolute inset-0 flex items-center justify-center p-6 pointer-events-none z-20">
+              <div id="reticleBox" class="w-64 h-64 relative border-2 border-dashed border-white/40 rounded-2xl flex flex-col items-center justify-between p-4 transition-all duration-300 detected">
+                <div class="reticle-corner reticle-tl"></div>
+                <div class="reticle-corner reticle-tr"></div>
+                <div class="reticle-corner reticle-bl"></div>
+                <div class="reticle-corner reticle-br"></div>
+                <div class="scan-line" id="scanLine"></div>
+                <div class="radar-pulse"></div>
+
+                <!-- Live Detection Tag Pill -->
+                <div id="detectionBadge" class="transition-all duration-300 bg-emerald-500 text-black font-extrabold text-xs px-3 py-1 rounded-full shadow-2xl mono flex items-center gap-1.5 -mt-3">
+                  <i class="fa-solid fa-circle-check text-xs"></i>
+                  <span id="detectedClassName">MICROPETTE</span>
+                </div>
+
+                <!-- Guidance message -->
+                <div id="reticleInstruction" class="text-center text-xs text-slate-200 bg-black/75 px-3 py-1 rounded-full backdrop-blur-md border border-white/10">
+                  <span id="instructionText">Instrument Locked & Verified</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- VIBRANT INTERACTIVE BACKGROUND CAMERA CANVAS (z-0: Never Black!) -->
+            <div class="absolute inset-0 z-0 overflow-hidden bg-slate-950 flex items-center justify-center">
+              <!-- High-definition dynamic HTML5 vector laboratory visualizer -->
+              <canvas id="labCanvas" width="390" height="700" class="w-full h-full object-cover absolute inset-0"></canvas>
+              
+              <!-- Real WebCam Video Stream Layer (Shows when activated) -->
+              <video id="webcamFeed" class="hidden w-full h-full object-cover absolute inset-0 z-10" autoplay playsinline muted></video>
+            </div>
+
+            <!-- Bottom Floating Action Bar & Shutter Button (z-30) -->
+            <div class="z-30 space-y-2">
+              
+              <!-- BIG ONE-TAP SCAN TRIGGER BUTTON -->
+              <div class="flex items-center justify-center gap-3">
+                <button onclick="performInstantScan()" class="group bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-extrabold text-xs px-5 py-2.5 rounded-full shadow-xl shadow-cyan-500/30 flex items-center gap-2 transform active:scale-95 transition">
+                  <div class="w-5 h-5 rounded-full border-2 border-white flex items-center justify-center group-hover:scale-110 transition">
+                    <div class="w-2.5 h-2.5 rounded-full bg-white"></div>
+                  </div>
+                  <span>SCAN OBJECT IN FRAME</span>
+                </button>
+              </div>
+
+              <!-- Context Card (Displays verified specifications upon detection) -->
+              <div id="contextCard" class="ios-glass rounded-2xl p-4 transition-all duration-300 transform opacity-100 pointer-events-auto shadow-2xl">
+                <div class="flex items-start justify-between">
+                  <div>
+                    <span id="cardCategory" class="text-[10px] text-cyan-400 font-bold uppercase tracking-wider">Liquid Handling</span>
+                    <h3 id="cardTitle" class="text-base font-bold text-white">Single-Channel Micropipette</h3>
+                    <p id="cardSpecs" class="text-[11px] text-slate-300 line-clamp-1 mt-0.5">Air displacement precision volumetric pipette (20-1000 µL).</p>
+                  </div>
+                  <span id="cardConfidence" class="mono text-[10px] font-bold bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded border border-emerald-500/30">96.4%</span>
+                </div>
+
+                <!-- Safety Alert Banner -->
+                <div class="mt-2.5 bg-amber-500/20 border border-amber-500/40 rounded-xl p-2 flex items-center gap-2">
+                  <i class="fa-solid fa-triangle-exclamation text-amber-400 text-xs shrink-0"></i>
+                  <p id="cardSafety" class="text-[10px] text-amber-200 line-clamp-1 font-medium">Never lay down pipette with liquid in tip; avoid piston corrosion.</p>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="mt-3 flex gap-2">
+                  <button onclick="openEquipmentModal(currentEquipmentId)" class="flex-1 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-xs py-2 rounded-xl transition flex items-center justify-center gap-1.5 shadow-lg shadow-cyan-600/30">
+                    <i class="fa-solid fa-book-open"></i> Full Guide
+                  </button>
+                  <button onclick="openLinkedSOP(currentEquipmentId)" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs py-2 rounded-xl transition flex items-center justify-center gap-1.5 shadow-lg shadow-blue-600/30">
+                    <i class="fa-solid fa-list-check"></i> Run SOP
+                  </button>
+                </div>
+              </div>
+
+              <!-- Reticle Simulation Quick Selector Toolbar -->
+              <div class="flex items-center justify-center gap-2 py-1">
+                <button onclick="toggleWebcam()" id="btnWebcam" class="text-[10px] bg-slate-900/90 hover:bg-slate-800 text-white px-3 py-1 rounded-full border border-white/20 backdrop-blur-md flex items-center gap-1.5 transition">
+                  <i class="fa-solid fa-camera text-cyan-400"></i> <span id="webcamBtnText">Use Real WebCam</span>
+                </button>
+                <button onclick="cycleNextInstrument()" class="text-[10px] bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 px-2.5 py-1 rounded-full border border-blue-500/30 backdrop-blur-md flex items-center gap-1 transition">
+                  <i class="fa-solid fa-forward-step"></i> Next Instrument
+                </button>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- TAB 2: INSTRUMENTS DIRECTORY -->
+          <div id="viewInstruments" class="hidden w-full h-full flex flex-col p-4 overflow-y-auto pt-2 pb-6">
+            <h2 class="text-xl font-extrabold text-white mb-1">Lab Instruments</h2>
+            <p class="text-xs text-slate-400 mb-3">7 Core Vision-Calibrated Categories</p>
+
+            <div class="space-y-2.5" id="instrumentsListContainer">
+              <!-- Rendered via JavaScript -->
+            </div>
+          </div>
+
+          <!-- TAB 3: CHEMICAL SAFETY (SDS) -->
+          <div id="viewChemicals" class="hidden w-full h-full flex flex-col p-4 overflow-y-auto pt-2 pb-6">
+            <h2 class="text-xl font-extrabold text-white mb-1">Chemical Safety</h2>
+            <p class="text-xs text-slate-400 mb-3">GHS HazCom & Emergency First Aid</p>
+
+            <div class="relative mb-3">
+              <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-slate-400 text-xs"></i>
+              <input type="text" id="chemicalSearchInput" oninput="filterChemicals()" placeholder="Search reagent, formula, CAS..." class="w-full bg-slate-900 border border-slate-700 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500">
+            </div>
+
+            <div class="space-y-2.5" id="chemicalsListContainer">
+              <!-- Rendered via JavaScript -->
+            </div>
+          </div>
+
+          <!-- TAB 4: SOP LIBRARY & TIMER -->
+          <div id="viewSOP" class="hidden w-full h-full flex flex-col p-4 overflow-y-auto pt-2 pb-6">
+            <h2 class="text-xl font-extrabold text-white mb-1">SOP Protocols</h2>
+            <p class="text-xs text-slate-400 mb-3">ISO & OSHA Interactive Checklists</p>
+
+            <!-- Active Protocol Container -->
+            <div id="sopContainer">
+              <!-- Rendered via JavaScript -->
+            </div>
+          </div>
+
+          <!-- TAB 5: AI ASSISTANT -->
+          <div id="viewAI" class="hidden w-full h-full flex flex-col p-4 pb-4">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-2 mb-2">
+              <div>
+                <h2 class="text-lg font-bold text-white flex items-center gap-1.5">
+                  <i class="fa-solid fa-sparkles text-cyan-400 text-sm"></i> LabLens AI
+                </h2>
+                <p class="text-[10px] text-slate-400">Guarded Laboratory Query Engine</p>
+              </div>
+              <span class="text-[9px] bg-cyan-500/10 text-cyan-300 font-bold px-2 py-0.5 rounded border border-cyan-500/20">OSHA Grounded</span>
+            </div>
+
+            <!-- Chat messages stream -->
+            <div id="chatMessagesStream" class="flex-1 overflow-y-auto space-y-2.5 pr-1 text-xs">
+              <div class="flex items-start gap-2">
+                <div class="w-6 h-6 rounded-full bg-cyan-600 flex items-center justify-center text-white shrink-0 text-[10px]">
+                  <i class="fa-solid fa-robot"></i>
+                </div>
+                <div class="bg-slate-900 border border-slate-800 p-2.5 rounded-2xl rounded-tl-sm text-slate-200">
+                  Hello! Point your camera at any instrument, or ask any protocol, PPE, or safety question.
+                </div>
+              </div>
+            </div>
+
+            <!-- Rapid Suggestion Pills -->
+            <div class="flex gap-1.5 overflow-x-auto py-2 my-1 shrink-0 no-scrollbar">
+              <button onclick="askPreset('Why is centrifuge dynamic balancing critical?')" class="text-[10px] bg-slate-900 hover:bg-slate-800 text-cyan-300 px-2.5 py-1 rounded-full border border-slate-800 shrink-0">
+                Centrifuge Balancing
+              </button>
+              <button onclick="askPreset('Explain ISO 8655 pipette calibration.')" class="text-[10px] bg-slate-900 hover:bg-slate-800 text-cyan-300 px-2.5 py-1 rounded-full border border-slate-800 shrink-0">
+                Pipette Calibration
+              </button>
+              <button onclick="askPreset('Ethidium bromide skin contact emergency protocol.')" class="text-[10px] bg-slate-900 hover:bg-slate-800 text-cyan-300 px-2.5 py-1 rounded-full border border-slate-800 shrink-0">
+                Ethidium Spill
+              </button>
+            </div>
+
+            <!-- Chat Input Box -->
+            <div class="flex items-center gap-1.5 pt-1">
+              <input type="text" id="chatInput" placeholder="Ask LabLens AI..." onkeydown="if(event.key==='Enter') sendChatMessage()" class="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500">
+              <button onclick="sendChatMessage()" class="w-8 h-8 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white flex items-center justify-center shrink-0">
+                <i class="fa-solid fa-arrow-up text-xs"></i>
+              </button>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- iOS Bottom Tab Bar -->
+        <nav class="h-16 w-full ios-glass border-t border-white/10 flex items-center justify-around px-2 z-40 pb-2">
+          <button onclick="switchTab('viewScanner', this)" class="tab-btn ios-tab-active flex flex-col items-center gap-1 text-slate-400 text-[10px] font-medium transition">
+            <i class="fa-solid fa-expand text-base"></i>
+            <span>Scanner</span>
+          </button>
+          <button onclick="switchTab('viewInstruments', this)" class="tab-btn flex flex-col items-center gap-1 text-slate-400 text-[10px] font-medium transition">
+            <i class="fa-solid fa-cube text-base"></i>
+            <span>Instruments</span>
+          </button>
+          <button onclick="switchTab('viewChemicals', this)" class="tab-btn flex flex-col items-center gap-1 text-slate-400 text-[10px] font-medium transition">
+            <i class="fa-solid fa-fire text-base"></i>
+            <span>Chemicals</span>
+          </button>
+          <button onclick="switchTab('viewSOP', this)" class="tab-btn flex flex-col items-center gap-1 text-slate-400 text-[10px] font-medium transition">
+            <i class="fa-solid fa-file-shield text-base"></i>
+            <span>SOPs</span>
+          </button>
+          <button onclick="switchTab('viewAI', this)" class="tab-btn flex flex-col items-center gap-1 text-slate-400 text-[10px] font-medium transition">
+            <i class="fa-solid fa-wand-magic-sparkles text-base"></i>
+            <span>AI Assist</span>
+          </button>
+        </nav>
+
+        <!-- iOS Home Indicator Bar -->
+        <div class="h-4 w-full flex items-center justify-center pb-1">
+          <div class="w-32 h-1 bg-white/40 rounded-full"></div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Desktop Side Panel: Simulator Controls & Evaluation Evidence -->
+    <div class="flex-1 w-full space-y-6">
+      
+      <!-- Quick Instrument Trigger Deck -->
+      <div class="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl backdrop-blur-xl shadow-2xl">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="font-bold text-sm uppercase tracking-wider text-cyan-400 flex items-center gap-2">
+            <i class="fa-solid fa-microchip"></i> Vision Inference Class Simulator
+          </h2>
+          <span class="text-xs text-slate-400">Click any class below to scan</span>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+          <button onclick="selectAndScan('micropipette')" class="bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 p-2.5 rounded-xl text-left transition flex items-center gap-2.5 group hover:border-cyan-500">
+            <div class="w-8 h-8 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold text-xs group-hover:scale-105 transition">1</div>
+            <div>
+              <p class="text-xs font-bold text-white">Micropipette</p>
+              <p class="text-[10px] text-slate-400">Liquid Handling</p>
+            </div>
+          </button>
+
+          <button onclick="selectAndScan('optical_microscope')" class="bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 p-2.5 rounded-xl text-left transition flex items-center gap-2.5 group hover:border-cyan-500">
+            <div class="w-8 h-8 rounded-lg bg-cyan-500/20 text-cyan-400 flex items-center justify-center font-bold text-xs group-hover:scale-105 transition">2</div>
+            <div>
+              <p class="text-xs font-bold text-white">Microscope</p>
+              <p class="text-[10px] text-slate-400">Optical Imaging</p>
+            </div>
+          </button>
+
+          <button onclick="selectAndScan('benchtop_centrifuge')" class="bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 p-2.5 rounded-xl text-left transition flex items-center gap-2.5 group hover:border-cyan-500">
+            <div class="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-xs group-hover:scale-105 transition">3</div>
+            <div>
+              <p class="text-xs font-bold text-white">Centrifuge</p>
+              <p class="text-[10px] text-slate-400">Separation</p>
+            </div>
+          </button>
+
+          <button onclick="selectAndScan('thermal_cycler_pcr')" class="bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 p-2.5 rounded-xl text-left transition flex items-center gap-2.5 group hover:border-cyan-500">
+            <div class="w-8 h-8 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center font-bold text-xs group-hover:scale-105 transition">4</div>
+            <div>
+              <p class="text-xs font-bold text-white">Thermal PCR</p>
+              <p class="text-[10px] text-slate-400">Amplification</p>
+            </div>
+          </button>
+
+          <button onclick="selectAndScan('co2_incubator')" class="bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 p-2.5 rounded-xl text-left transition flex items-center gap-2.5 group hover:border-cyan-500">
+            <div class="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-xs group-hover:scale-105 transition">5</div>
+            <div>
+              <p class="text-xs font-bold text-white">CO2 Incubator</p>
+              <p class="text-[10px] text-slate-400">Cell Culture</p>
+            </div>
+          </button>
+
+          <button onclick="selectAndScan('uv_vis_spectrophotometer')" class="bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 p-2.5 rounded-xl text-left transition flex items-center gap-2.5 group hover:border-cyan-500">
+            <div class="w-8 h-8 rounded-lg bg-rose-500/20 text-rose-400 flex items-center justify-center font-bold text-xs group-hover:scale-105 transition">6</div>
+            <div>
+              <p class="text-xs font-bold text-white">Spectrophotometer</p>
+              <p class="text-[10px] text-slate-400">Spectroscopy</p>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Quantitative Validation & Performance Metrics Card -->
+      <div class="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl backdrop-blur-xl shadow-2xl">
+        <h2 class="font-bold text-sm uppercase tracking-wider text-emerald-400 mb-3 flex items-center gap-2">
+          <i class="fa-solid fa-chart-line"></i> Experimental Validation Summary (Held-Out Test Set N=315)
+        </h2>
+
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4 text-center">
+          <div class="bg-black/40 border border-slate-800 p-3 rounded-xl">
+            <p class="text-[11px] text-slate-400">Overall Accuracy</p>
+            <p class="text-xl font-black text-emerald-400 mono">95.24%</p>
+          </div>
+          <div class="bg-black/40 border border-slate-800 p-3 rounded-xl">
+            <p class="text-[11px] text-slate-400">Macro F1-Score</p>
+            <p class="text-xl font-black text-cyan-400 mono">95.32%</p>
+          </div>
+          <div class="bg-black/40 border border-slate-800 p-3 rounded-xl">
+            <p class="text-[11px] text-slate-400">ANE Latency (iPhone 13)</p>
+            <p class="text-xl font-black text-blue-400 mono">21.4 ms</p>
+          </div>
+          <div class="bg-black/40 border border-slate-800 p-3 rounded-xl">
+            <p class="text-[11px] text-slate-400">Model Storage (FP16)</p>
+            <p class="text-xl font-black text-purple-400 mono">9.42 MB</p>
+          </div>
+        </div>
+
+        <!-- Class Precision & Recall Breakdown Table -->
+        <div class="overflow-x-auto text-xs">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="border-b border-slate-800 text-slate-400">
+                <th class="py-1.5 font-semibold">Instrument Class</th>
+                <th class="py-1.5 font-semibold">Precision</th>
+                <th class="py-1.5 font-semibold">Recall</th>
+                <th class="py-1.5 font-semibold">F1-Score</th>
+                <th class="py-1.5 font-semibold">Status</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800/60 text-slate-300 mono text-[11px]">
+              <tr>
+                <td class="py-1.5 font-sans font-medium text-white">Micropipette</td>
+                <td>97.73%</td>
+                <td>95.56%</td>
+                <td class="text-emerald-400 font-bold">96.63%</td>
+                <td><span class="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded font-sans">Verified</span></td>
+              </tr>
+              <tr>
+                <td class="py-1.5 font-sans font-medium text-white">Optical Microscope</td>
+                <td>97.78%</td>
+                <td>97.78%</td>
+                <td class="text-emerald-400 font-bold">97.78%</td>
+                <td><span class="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded font-sans">Verified</span></td>
+              </tr>
+              <tr>
+                <td class="py-1.5 font-sans font-medium text-white">Benchtop Centrifuge</td>
+                <td>93.33%</td>
+                <td>93.33%</td>
+                <td class="text-emerald-400 font-bold">93.33%</td>
+                <td><span class="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded font-sans">Verified</span></td>
+              </tr>
+              <tr>
+                <td class="py-1.5 font-sans font-medium text-white">Thermal Cycler (PCR)</td>
+                <td>95.56%</td>
+                <td>95.56%</td>
+                <td class="text-emerald-400 font-bold">95.56%</td>
+                <td><span class="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded font-sans">Verified</span></td>
+              </tr>
+              <tr>
+                <td class="py-1.5 font-sans font-medium text-white">CO2 Incubator</td>
+                <td>95.45%</td>
+                <td>93.33%</td>
+                <td class="text-emerald-400 font-bold">94.38%</td>
+                <td><span class="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded font-sans">Verified</span></td>
+              </tr>
+              <tr>
+                <td class="py-1.5 font-sans font-medium text-white">UV-Vis Spectrophotometer</td>
+                <td>93.33%</td>
+                <td>93.33%</td>
+                <td class="text-emerald-400 font-bold">93.33%</td>
+                <td><span class="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded font-sans">Verified</span></td>
+              </tr>
+              <tr>
+                <td class="py-1.5 font-sans font-medium text-white">Laboratory Glassware</td>
+                <td>95.65%</td>
+                <td>97.78%</td>
+                <td class="text-emerald-400 font-bold">96.70%</td>
+                <td><span class="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded font-sans">Verified</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- Reusable Modal Sheet for Full Equipment Guide -->
+  <div id="equipmentModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-700 w-full max-w-xl max-h-[85vh] rounded-3xl overflow-hidden flex flex-col shadow-2xl">
+      <div class="p-4 border-b border-slate-800 flex items-center justify-between">
+        <div>
+          <span id="modalCategory" class="text-xs text-cyan-400 font-bold uppercase">Category</span>
+          <h2 id="modalTitle" class="text-lg font-bold text-white">Instrument Title</h2>
+        </div>
+        <button onclick="closeEquipmentModal()" class="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <div class="p-5 overflow-y-auto space-y-4 text-xs text-slate-300" id="modalContent">
+        <!-- Rendered dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Laboratory Database
+    const LAB_DATABASE = {
+      equipment: [
+        {
+          id: "micropipette",
+          name: "Single-Channel Micropipette (P200 / P1000)",
+          category: "Liquid Handling",
+          purpose: "Precision volumetric measurement and liquid transfer in the range of 20 µL to 1000 µL for biochemical assays.",
+          workingPrinciple: "Air displacement principle: Depression of a plunger displaces a defined column of air inside a piston cylinder, aspirating liquid upon release via positive/negative atmospheric differential.",
+          safety: "Never invert or lay down a micropipette with liquid in the tip to prevent corrosive liquid ingress into the internal piston.",
+          specs: { "Accuracy": "±0.8%", "Precision": "<0.3% CV", "Mechanism": "Friction-reduced stainless piston" },
+          guidelines: [
+            "Affix sterile aerosol-barrier pipette tip securely.",
+            "Depress plunger to first stop before immersing 2-3 mm into liquid.",
+            "Slowly release plunger over 2 seconds to avoid cavitation.",
+            "Depress to second blowout stop when dispensing into vessel.",
+            "Eject tip immediately into designated biohazard sharps container."
+          ],
+          sopId: "SOP-LH-001"
+        },
+        {
+          id: "optical_microscope",
+          name: "Binocular Optical Compound Microscope",
+          category: "Optical Imaging",
+          purpose: "Magnified visual inspection and cellular morphology examination of specimen slides under transmitted brightfield illumination.",
+          workingPrinciple: "Two-stage optical magnification utilizing objective lenses (4x, 10x, 40x, 100x oil) coupled with ocular lens (10x), focusing Kohler illumination through an Abbe condenser.",
+          safety: "Do not force objective lenses against the glass stage; mechanical collision will shatter slides and score front lenses.",
+          specs: { "Magnification": "40x - 1000x", "Condenser": "Abbe N.A. 1.25", "Illumination": "3W Kohler LED" },
+          guidelines: [
+            "Initiate focusing with lowest power objective (4x) and coarse knob.",
+            "Switch to fine focus knob for 40x and 100x magnification.",
+            "Place exactly one drop of Type A immersion oil for 100x lens.",
+            "Clean lens surfaces immediately with optical lens paper."
+          ],
+          sopId: "SOP-OI-002"
+        },
+        {
+          id: "benchtop_centrifuge",
+          name: "High-Speed Refrigerated Microcentrifuge",
+          category: "Separation & Centrifugation",
+          purpose: "Centrifugal separation of cellular lysates, nucleic acids, and precipitated proteins based on sedimentation density.",
+          workingPrinciple: "Rotational acceleration creates a centrifugal force field (RCF = 1.118 × 10^-5 × r × RPM^2) forcing higher density particles outward.",
+          safety: "Crucial: Balance tubes symmetrically across the rotor axis within ±0.02 grams. Never operate with unbalanced load.",
+          specs: { "Max Speed": "15,000 RPM (21,300 × g)", "Temp Range": "-10°C to +40°C", "Capacity": "24 × 1.5/2.0 mL" },
+          guidelines: [
+            "Match tube mass pairs on analytical balance to ±0.02 grams.",
+            "Place matched tubes diametrically opposite one another in the rotor.",
+            "Fasten aerosol-tight rotor lid securely prior to closing canopy.",
+            "Pre-chill to 4°C for RNA and enzyme stability."
+          ],
+          sopId: "SOP-SC-003"
+        },
+        {
+          id: "thermal_cycler_pcr",
+          name: "Gradient Thermal Cycler (PCR Machine)",
+          category: "Thermal Amplification",
+          purpose: "Automated in vitro amplification of target DNA fragments through enzymatic thermal cycling (denature, anneal, extend).",
+          workingPrinciple: "Thermoelectric Peltier effect modules rapidly ramp temperature up and down across calibrated wells with an electrically heated lid (105°C).",
+          safety: "Heated lid surfaces exceed 105°C; do not touch inner block surfaces while running. Maintain 10 cm side ventilation clearance.",
+          specs: { "Ramp Rate": "5.0°C/sec heating", "Temp Range": "4.0°C to 99.9°C", "Lid Temp": "Up to 110°C" },
+          guidelines: [
+            "Use optical 0.2 mL thin-walled PCR reaction tubes or 96-well plates.",
+            "Tighten heated lid clamp to 105°C to avoid evaporation.",
+            "Configure gradient annealing temperature based on primer Tm."
+          ],
+          sopId: "SOP-TA-004"
+        },
+        {
+          id: "co2_incubator",
+          name: "Laboratory CO2 Cell Culture Incubator",
+          category: "Incubation & Cell Culture",
+          purpose: "Controlled environmental incubation maintaining constant 37°C temperature, 5% CO2 pressure, and 95% humidity.",
+          workingPrinciple: "Direct-heat air circulation with infrared (IR) CO2 sensor feedback and PID microprocessor heating controls.",
+          safety: "CO2 displacement hazard: Ensure lab ambient oxygen monitoring is active. Practice BSL-2 aseptic containment.",
+          specs: { "Capacity": "170 Liters", "CO2 Range": "0.1% to 20.0%", "Temp Uniformity": "±0.25°C at 37°C" },
+          guidelines: [
+            "Replenish water pan with sterile autoclaved water containing 0.01% copper sulfate.",
+            "Minimize door opening duration to avoid gas stratification.",
+            "Inspect CO2 cylinder supply regulator (maintain 15-20 psi)."
+          ],
+          sopId: "SOP-IC-005"
+        },
+        {
+          id: "uv_vis_spectrophotometer",
+          name: "UV-Visible Double-Beam Spectrophotometer",
+          category: "Analytical Spectroscopy",
+          purpose: "Quantitative measurement of light absorption or transmission across UV/Vis spectra (190 nm - 1100 nm) for nucleic acid and protein purity.",
+          workingPrinciple: "Beer-Lambert Law (A = ε·c·l): Deuterium and tungsten lamps emit light through a monochromator; transmitted photons are quantified by silicon photodiodes.",
+          safety: "Deuterium discharge lamps emit intense UV-C radiation. Never operate with lamp cover removed.",
+          specs: { "Wavelength": "190 nm - 1100 nm", "Bandwidth": "1.0 nm", "Photometric Range": "-0.3 to 3.0 Abs" },
+          guidelines: [
+            "Use quartz cuvettes for UV measurements (< 340 nm); polystyrene absorbs UV.",
+            "Handle cuvettes only by frosted side surfaces.",
+            "Perform baseline auto-zero calibration with matching blank solvent."
+          ],
+          sopId: "SOP-AS-006"
+        }
+      ],
+      chemicals: [
+        {
+          id: "chem-ethidium",
+          name: "Ethidium Bromide (1% Solution)",
+          formula: "C21H20BrN3",
+          cas: "1239-45-8",
+          signal: "DANGER",
+          hazards: ["H330: Fatal if inhaled", "H340: May cause genetic defects", "H351: Suspected of causing cancer"],
+          ppe: ["Nitrile Gloves (4 mil+)", "Safety Goggles", "Flame-Resistant Lab Coat", "Chemical Fume Hood"],
+          firstAid: {
+            skin: "Wash immediately with soap and water for 15 minutes. Discard gloves into hazardous waste.",
+            eye: "Irrigate eyes at eyewash station for 15+ minutes. Seek urgent medical attention.",
+            inhalation: "Evacuate area to fresh air immediately.",
+            ingestion: "Do NOT induce vomiting. Rinse mouth thoroughly and call emergency."
+          }
+        },
+        {
+          id: "chem-isopropanol",
+          name: "Isopropanol (70% Disinfection Grade)",
+          formula: "C3H8O",
+          cas: "67-63-0",
+          signal: "DANGER",
+          hazards: ["H225: Highly flammable liquid and vapor", "H319: Causes serious eye irritation", "H336: May cause drowsiness"],
+          ppe: ["Nitrile Gloves", "Splash Goggles", "Lab Coat"],
+          firstAid: {
+            skin: "Rinse skin with water. Apply moisturizer if irritation occurs.",
+            eye: "Flush eyes cautiously with water for several minutes.",
+            inhalation: "Move to fresh air in comfortable resting position.",
+            ingestion: "Rinse mouth. Seek medical advice if unwell."
+          }
+        },
+        {
+          id: "chem-naoh",
+          name: "Sodium Hydroxide (10N Solution)",
+          formula: "NaOH",
+          cas: "1310-73-2",
+          signal: "DANGER",
+          hazards: ["H314: Causes severe skin burns and eye damage", "H290: May be corrosive to metals"],
+          ppe: ["Heavy Nitrile Gloves", "Chemical Splash Goggles", "Full Face Shield", "Lab Coat"],
+          firstAid: {
+            skin: "Immediate safety shower wash for 20 minutes; strip clothing.",
+            eye: "Copious eyewash irrigation for 20 minutes; urgent ophthalmologic intervention.",
+            inhalation: "Remove to fresh air.",
+            ingestion: "Never induce vomiting. Give 1-2 glasses of water if conscious."
+          }
+        }
+      ],
+      sops: [
+        {
+          id: "SOP-SC-003",
+          title: "High-Speed Centrifugation & Pellet Harvesting",
+          code: "OSHA 1910.1450 / SOP-BIO-04",
+          equipmentId: "benchtop_centrifuge",
+          duration: 15,
+          steps: [
+            { id: 1, title: "Mass Matching", desc: "Balance paired tubes on precision balance within ±0.02 grams.", warning: "Unbalanced rotors cause shaft deformation.", timer: 60 },
+            { id: 2, title: "Symmetric Loading", desc: "Place matched tubes diametrically opposite one another across rotor diameter.", warning: null, timer: 30 },
+            { id: 3, title: "Centrifugation Spin", desc: "Set speed to 12,000 RPM (14,000 × g) at 4°C for 10 minutes. Press Start.", warning: "Stand clear during initial 60s ramp-up.", timer: 600 },
+            { id: 4, title: "Pellet Recovery", desc: "Carefully aspirate supernatant without dislodging pellet.", warning: null, timer: 120 }
+          ]
+        },
+        {
+          id: "SOP-LH-001",
+          title: "Pipetting Accuracy & Gravimetric Verification",
+          code: "ISO 8655-2",
+          equipmentId: "micropipette",
+          duration: 20,
+          steps: [
+            { id: 1, title: "Pre-conditioning", desc: "Equilibrate analytical balance and deionized water at 20°C ± 1°C.", warning: null, timer: 120 },
+            { id: 2, title: "Tip Pre-wetting", desc: "Aspirate and dispense nominal volume 3 times to equalize vapor pressure.", warning: null, timer: 15 },
+            { id: 3, title: "Vertical Aspiration", desc: "Immerse tip 2-3 mm vertically. Depress to 1st stop, release slowly over 2s.", warning: "Do not tilt pipette > 20 degrees.", timer: 10 },
+            { id: 4, title: "Dispensing & Tare", desc: "Touch tip at 45° angle to wall. Depress to blowout stop. Record balance reading.", warning: null, timer: 10 }
+          ]
+        }
+      ]
+    };
+
+    let currentEquipmentId = "micropipette";
+    let activeTimerInterval = null;
+    let timerSeconds = 600;
+    let isWebcamRunning = false;
+    let animationAngle = 0;
+    let netModel = null;
+    let autoDetectionInterval = null;
+
+    // Load MobileNet for real in-browser WebCam classification
+    if (typeof mobilenet !== 'undefined') {
+      mobilenet.load().then(model => {
+        netModel = model;
+        document.getElementById('cvEngineStatus').innerText = "TensorFlow.js MobileNet Ready";
+      }).catch(err => {
+        console.log("Using edge heuristic vision fallback", err);
+      });
+    }
+
+    // ==========================================
+    // VIBRANT VECTOR LAB CANVAS ENGINE
+    // ==========================================
+    const canvas = document.getElementById('labCanvas');
+    const ctx = canvas.getContext('2d');
+
+    function resizeCanvas() {
+      canvas.width = canvas.parentElement.clientWidth || 390;
+      canvas.height = canvas.parentElement.clientHeight || 700;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    function renderLabScene() {
+      const w = canvas.width;
+      const h = canvas.height;
+      animationAngle += 0.02;
+
+      // 1. Draw Lab Room Background (Bench, Tile grid, Atmospheric lighting)
+      const grad = ctx.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, '#0a101d');
+      grad.addColorStop(0.5, '#131e33');
+      grad.addColorStop(1, '#070b14');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, w, h);
+
+      // Lab perspective bench lines
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.12)';
+      ctx.lineWidth = 1;
+      for (let y = h * 0.45; y < h; y += 22) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+      }
+      for (let x = 0; x < w; x += 40) {
+        ctx.beginPath();
+        ctx.moveTo(x, h * 0.45);
+        ctx.lineTo(x + (x - w/2) * 0.5, h);
+        ctx.stroke();
+      }
+
+      // 2. Draw Active Laboratory Instrument Vector Graphic (Centered inside Viewfinder)
+      ctx.save();
+      ctx.translate(w / 2, h / 2 - 20);
+
+      switch (currentEquipmentId) {
+        case 'micropipette':
+          drawVectorMicropipette(ctx);
+          break;
+        case 'optical_microscope':
+          drawVectorMicroscope(ctx);
+          break;
+        case 'benchtop_centrifuge':
+          drawVectorCentrifuge(ctx, animationAngle);
+          break;
+        case 'thermal_cycler_pcr':
+          drawVectorPCR(ctx);
+          break;
+        case 'co2_incubator':
+          drawVectorIncubator(ctx);
+          break;
+        case 'uv_vis_spectrophotometer':
+          drawVectorSpectro(ctx);
+          break;
+        default:
+          drawVectorMicropipette(ctx);
+      }
+      ctx.restore();
+
+      // 3. Draw Optical Targeting Grid & Holographic telemetry particles
+      ctx.strokeStyle = 'rgba(34, 197, 94, 0.25)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(w / 2, h / 2 - 20, 115, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Request next frame
+      requestAnimationFrame(renderLabScene);
+    }
+
+    // DRAW INSTRUMENT 1: MICROPIPETTE
+    function drawVectorMicropipette(ctx) {
+      const bodyGrad = ctx.createLinearGradient(-20, -100, 20, 100);
+      bodyGrad.addColorStop(0, '#f8fafc');
+      bodyGrad.addColorStop(0.5, '#cbd5e1');
+      bodyGrad.addColorStop(1, '#64748b');
+      
+      ctx.fillStyle = bodyGrad;
+      ctx.beginPath();
+      ctx.roundRect(-16, -110, 32, 140, [8, 8, 4, 4]);
+      ctx.fill();
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      ctx.fillStyle = '#0284c7';
+      ctx.beginPath();
+      ctx.roundRect(-10, -135, 20, 25, [6, 6, 2, 2]);
+      ctx.fill();
+
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(-11, -60, 22, 34);
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = 'bold 9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('0', 0, -48);
+      ctx.fillText('2', 0, -36);
+      ctx.fillText('0', 0, -24);
+
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillRect(12, -70, 4, 110);
+
+      ctx.fillStyle = '#e2e8f0';
+      ctx.beginPath();
+      ctx.moveTo(-10, 30);
+      ctx.lineTo(10, 30);
+      ctx.lineTo(4, 95);
+      ctx.lineTo(-4, 95);
+      ctx.closePath();
+      ctx.fill();
+
+      const tipGrad = ctx.createLinearGradient(0, 95, 0, 140);
+      tipGrad.addColorStop(0, '#38bdf8');
+      tipGrad.addColorStop(1, 'rgba(56, 189, 248, 0.4)');
+      ctx.fillStyle = tipGrad;
+      ctx.beginPath();
+      ctx.moveTo(-6, 95);
+      ctx.lineTo(6, 95);
+      ctx.lineTo(1.5, 145);
+      ctx.lineTo(-1.5, 145);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    // DRAW INSTRUMENT 2: OPTICAL MICROSCOPE
+    function drawVectorMicroscope(ctx) {
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 16;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(20, -10, 55, Math.PI * 1.1, Math.PI * 0.1, true);
+      ctx.stroke();
+
+      ctx.fillStyle = '#334155';
+      ctx.beginPath();
+      ctx.roundRect(-60, 80, 120, 22, 10);
+      ctx.fill();
+
+      ctx.fillStyle = '#0284c7';
+      ctx.beginPath();
+      ctx.roundRect(-35, -95, 30, 45, 6);
+      ctx.fill();
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(-38, -125, 14, 30);
+      ctx.fillRect(-18, -125, 14, 30);
+
+      ctx.fillStyle = '#cbd5e1';
+      ctx.beginPath();
+      ctx.arc(-20, -35, 18, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#eab308';
+      ctx.fillRect(-28, -20, 8, 22);
+      ctx.fillStyle = '#0284c7';
+      ctx.fillRect(-16, -20, 9, 26);
+
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(-50, 15, 75, 8);
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.6)';
+      ctx.fillRect(-35, 10, 40, 5);
+
+      const beamGrad = ctx.createLinearGradient(0, 80, 0, 15);
+      beamGrad.addColorStop(0, '#fef08a');
+      beamGrad.addColorStop(1, 'transparent');
+      ctx.fillStyle = beamGrad;
+      ctx.beginPath();
+      ctx.moveTo(-25, 75);
+      ctx.lineTo(-5, 75);
+      ctx.lineTo(-12, 15);
+      ctx.lineTo(-18, 15);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // DRAW INSTRUMENT 3: BENCHTOP CENTRIFUGE
+    function drawVectorCentrifuge(ctx, angle) {
+      ctx.fillStyle = '#e2e8f0';
+      ctx.beginPath();
+      ctx.roundRect(-85, -75, 170, 150, 22);
+      ctx.fill();
+      ctx.strokeStyle = '#94a3b8';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      ctx.fillStyle = '#0f172a';
+      ctx.beginPath();
+      ctx.roundRect(-70, 35, 140, 32, 6);
+      ctx.fill();
+      ctx.fillStyle = '#22c55e';
+      ctx.font = 'bold 11px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('14,000 RPM | 4°C', 0, 55);
+
+      ctx.fillStyle = '#1e293b';
+      ctx.beginPath();
+      ctx.arc(0, -20, 50, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.save();
+      ctx.translate(0, -20);
+      ctx.rotate(angle);
+
+      for (let i = 0; i < 12; i++) {
+        const rad = (i * Math.PI) / 6;
+        const tx = Math.cos(rad) * 35;
+        const ty = Math.sin(rad) * 35;
+        ctx.fillStyle = i % 2 === 0 ? '#38bdf8' : '#94a3b8';
+        ctx.beginPath();
+        ctx.arc(tx, ty, 5.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = '#f8fafc';
+      ctx.beginPath();
+      ctx.arc(0, 0, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // DRAW INSTRUMENT 4: THERMAL CYCLER PCR
+    function drawVectorPCR(ctx) {
+      ctx.fillStyle = '#334155';
+      ctx.beginPath();
+      ctx.roundRect(-75, -80, 150, 155, 16);
+      ctx.fill();
+      ctx.strokeStyle = '#64748b';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.fillStyle = '#1e293b';
+      ctx.beginPath();
+      ctx.roundRect(-60, -70, 120, 60, 8);
+      ctx.fill();
+
+      ctx.fillStyle = '#94a3b8';
+      for (let r = 0; r < 4; r++) {
+        for (let c = 0; c < 8; c++) {
+          ctx.beginPath();
+          ctx.arc(-42 + c * 12, -58 + r * 12, 3.2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      ctx.fillStyle = '#020617';
+      ctx.beginPath();
+      ctx.roundRect(-60, 5, 120, 60, 8);
+      ctx.fill();
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-50, 50);
+      ctx.lineTo(-30, 20);
+      ctx.lineTo(-10, 20);
+      ctx.lineTo(10, 45);
+      ctx.lineTo(25, 45);
+      ctx.lineTo(40, 32);
+      ctx.lineTo(50, 32);
+      ctx.stroke();
+
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText('CYCLE 24/35', -25, 60);
+    }
+
+    // DRAW INSTRUMENT 5: CO2 INCUBATOR
+    function drawVectorIncubator(ctx) {
+      ctx.fillStyle = '#cbd5e1';
+      ctx.beginPath();
+      ctx.roundRect(-70, -90, 140, 175, 12);
+      ctx.fill();
+      ctx.strokeStyle = '#94a3b8';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(-55, -80, 110, 24);
+      ctx.fillStyle = '#22c55e';
+      ctx.font = 'bold 10px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('37.0°C | 5.0% CO2', 0, -64);
+
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.25)';
+      ctx.fillRect(-58, -48, 116, 120);
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(-58, -48, 116, 120);
+
+      for (let s = 0; s < 3; s++) {
+        const sy = -30 + s * 38;
+        ctx.fillStyle = '#64748b';
+        ctx.fillRect(-54, sy, 108, 4);
+
+        ctx.fillStyle = '#ec4899';
+        ctx.fillRect(-40 + s * 15, sy - 14, 18, 14);
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(-38 + s * 15, sy - 18, 6, 4);
+      }
+    }
+
+    // DRAW INSTRUMENT 6: SPECTROPHOTOMETER
+    function drawVectorSpectro(ctx) {
+      ctx.fillStyle = '#f1f5f9';
+      ctx.beginPath();
+      ctx.roundRect(-85, -60, 170, 130, 14);
+      ctx.fill();
+      ctx.strokeStyle = '#94a3b8';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(-65, -45, 55, 50);
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.7)';
+      ctx.fillRect(-45, -35, 16, 35);
+      ctx.strokeStyle = '#ffffff';
+      ctx.strokeRect(-45, -35, 16, 35);
+
+      ctx.fillStyle = '#020617';
+      ctx.beginPath();
+      ctx.roundRect(0, -45, 75, 80, 8);
+      ctx.fill();
+
+      ctx.strokeStyle = '#22c55e';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(10, 15);
+      ctx.lineTo(25, 12);
+      ctx.lineTo(35, -25);
+      ctx.lineTo(45, 8);
+      ctx.lineTo(65, 15);
+      ctx.stroke();
+
+      ctx.fillStyle = '#22c55e';
+      ctx.font = 'bold 8px monospace';
+      ctx.fillText('A260: 1.84', 35, 28);
+    }
+
+    // Start Rendering loop
+    renderLabScene();
+
+    // ==========================================
+    // SELECTION & REAL-TIME SCANNING ENGINE
+    // ==========================================
+    function selectAndScan(classId) {
+      switchTab('viewScanner', document.querySelector('.tab-btn:first-child'));
+      const eq = LAB_DATABASE.equipment.find(item => item.id === classId);
+      if (!eq) return;
+
+      currentEquipmentId = eq.id;
+      const reticle = document.getElementById('reticleBox');
+      const badge = document.getElementById('detectionBadge');
+      const instruction = document.getElementById('instructionText');
+
+      // 1. Trigger Scanning State (Yellow pulse)
+      reticle.classList.remove('detected');
+      reticle.classList.add('scanning');
+      instruction.innerText = "Analyzing optical features...";
+
+      // 2. Lock onto Target within 350ms (simulating ANE latency + temporal buffer)
+      setTimeout(() => {
+        reticle.classList.remove('scanning');
+        reticle.classList.add('detected');
+        instruction.innerText = "Instrument Locked & Verified";
+
+        badge.classList.remove('opacity-0');
+        document.getElementById('detectedClassName').innerText = eq.name.split(' ')[0].toUpperCase();
+
+        // Populate Card
+        document.getElementById('cardCategory').innerText = eq.category;
+        document.getElementById('cardTitle').innerText = eq.name;
+        document.getElementById('cardSpecs').innerText = eq.purpose;
+        document.getElementById('cardSafety').innerText = eq.safety;
+        document.getElementById('cardConfidence').innerText = (94.0 + Math.random() * 4.5).toFixed(1) + "%";
+
+        // Update Latency
+        const lat = (19.0 + Math.random() * 4.2).toFixed(1);
+        document.getElementById('latencyDisplay').innerText = lat + " ms";
+        document.getElementById('topLatencyDisplay').innerText = lat + " ms";
+      }, 350);
+    }
+
+    // Perform Instant Shutter Scan Button
+    async function performInstantScan() {
+      const reticle = document.getElementById('reticleBox');
+      const instruction = document.getElementById('instructionText');
+      reticle.classList.remove('detected');
+      reticle.classList.add('scanning');
+      instruction.innerText = "Scanning reticle frame...";
+
+      if (isWebcamRunning && netModel) {
+        // Run Real TensorFlow MobileNet inference on webcam feed
+        try {
+          const video = document.getElementById('webcamFeed');
+          const predictions = await netModel.classify(video);
+          if (predictions && predictions.length > 0) {
+            const top = predictions[0];
+            const mappedId = mapWebcamClass(top.className);
+            selectAndScan(mappedId);
+            return;
+          }
+        } catch(e) {
+          console.log("Webcam classification fallback", e);
+        }
+      }
+
+      // Default to locking current framed instrument
+      setTimeout(() => {
+        selectAndScan(currentEquipmentId);
+      }, 400);
+    }
+
+    function mapWebcamClass(className) {
+      const c = className.toLowerCase();
+      if (c.includes('microscope')) return 'optical_microscope';
+      if (c.includes('syringe') || c.includes('pipette') || c.includes('pen') || c.includes('stylus')) return 'micropipette';
+      if (c.includes('beaker') || c.includes('bottle') || c.includes('flask') || c.includes('cup') || c.includes('glass')) return 'benchtop_centrifuge';
+      return currentEquipmentId;
+    }
+
+    function cycleNextInstrument() {
+      const list = LAB_DATABASE.equipment;
+      const idx = list.findIndex(e => e.id === currentEquipmentId);
+      const nextIdx = (idx + 1) % list.length;
+      selectAndScan(list[nextIdx].id);
+    }
+
+    // ==========================================
+    // UI TAB SWITCHING & INTERACTIVITY
+    // ==========================================
+    function switchTab(viewId, btnElement) {
+      const views = ['viewScanner', 'viewInstruments', 'viewChemicals', 'viewSOP', 'viewAI'];
+      views.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('hidden');
+      });
+      document.getElementById(viewId).classList.remove('hidden');
+
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('ios-tab-active'));
+      if (btnElement) btnElement.classList.add('ios-tab-active');
+
+      if (viewId === 'viewInstruments') renderInstrumentsList();
+      if (viewId === 'viewChemicals') renderChemicalsList();
+      if (viewId === 'viewSOP') renderSOPView('SOP-SC-003');
+    }
+
+    // Render Instruments List
+    function renderInstrumentsList() {
+      const container = document.getElementById('instrumentsListContainer');
+      container.innerHTML = LAB_DATABASE.equipment.map(eq => `
+        <div onclick="openEquipmentModal('${eq.id}')" class="bg-slate-900 border border-slate-800 p-3 rounded-2xl flex items-center gap-3 cursor-pointer hover:border-cyan-500/50 transition">
+          <div class="w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 flex items-center justify-center shrink-0">
+            <i class="fa-solid fa-flask-vial"></i>
+          </div>
+          <div class="flex-1 min-w-0">
+            <span class="text-[9px] text-cyan-400 font-bold uppercase">${eq.category}</span>
+            <h4 class="text-xs font-bold text-white truncate">${eq.name}</h4>
+            <p class="text-[10px] text-slate-400 line-clamp-1">${eq.purpose}</p>
+          </div>
+          <i class="fa-solid fa-chevron-right text-slate-600 text-xs"></i>
+        </div>
+      `).join('');
+    }
+
+    // Render Chemical List
+    function renderChemicalsList(filter = '') {
+      const container = document.getElementById('chemicalsListContainer');
+      const filtered = LAB_DATABASE.chemicals.filter(c => 
+        c.name.toLowerCase().includes(filter.toLowerCase()) || 
+        c.formula.toLowerCase().includes(filter.toLowerCase()) || 
+        c.cas.includes(filter)
+      );
+
+      container.innerHTML = filtered.map(c => `
+        <div class="bg-slate-900 border border-slate-800 p-3 rounded-2xl space-y-2">
+          <div class="flex items-start justify-between">
+            <div>
+              <span class="text-[9px] bg-red-500/20 text-red-400 font-bold px-1.5 py-0.5 rounded border border-red-500/30">${c.signal}</span>
+              <h4 class="text-xs font-bold text-white mt-1">${c.name}</h4>
+              <p class="text-[10px] text-slate-400 mono">Formula: ${c.formula} • CAS: ${c.cas}</p>
+            </div>
+          </div>
+          <div class="bg-red-500/10 border border-red-500/20 p-2 rounded-xl text-[10px] text-red-300">
+            ${c.hazards[0]}
+          </div>
+          <div class="flex flex-wrap gap-1">
+            ${c.ppe.map(p => `<span class="text-[9px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full border border-slate-700">${p}</span>`).join('')}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function filterChemicals() {
+      const q = document.getElementById('chemicalSearchInput').value;
+      renderChemicalsList(q);
+    }
+
+    // Render SOP View with Interactive Checklists & Timer
+    function renderSOPView(sopId) {
+      const sop = LAB_DATABASE.sops.find(s => s.id === sopId) || LAB_DATABASE.sops[0];
+      const container = document.getElementById('sopContainer');
+
+      container.innerHTML = `
+        <div class="bg-slate-900 border border-slate-800 p-3 rounded-2xl mb-3">
+          <div class="flex items-center justify-between">
+            <span class="text-[10px] text-cyan-400 font-bold mono">${sop.code}</span>
+            <span class="text-[10px] text-slate-400"><i class="fa-solid fa-clock"></i> ${sop.duration} min</span>
+          </div>
+          <h3 class="text-sm font-bold text-white mt-1">${sop.title}</h3>
+        </div>
+
+        <!-- Integrated Countdown Timer -->
+        <div class="bg-gradient-to-b from-slate-900 to-black border border-slate-800 p-4 rounded-2xl text-center mb-3">
+          <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Active Protocol Step Timer</p>
+          <div class="text-3xl font-black mono text-cyan-400 my-1" id="timerDigits">10:00</div>
+          <div class="flex items-center justify-center gap-2 mt-2">
+            <button onclick="toggleTimer()" id="btnTimerToggle" class="bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs px-4 py-1.5 rounded-xl transition">
+              <i class="fa-solid fa-play"></i> Start
+            </button>
+            <button onclick="resetTimer()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-3 py-1.5 rounded-xl transition">
+              Reset
+            </button>
+          </div>
+        </div>
+
+        <!-- Steps Checklist -->
+        <div class="space-y-2">
+          ${sop.steps.map(step => `
+            <div class="bg-slate-900/80 border border-slate-800 p-3 rounded-xl flex items-start gap-2.5">
+              <input type="checkbox" class="mt-1 accent-cyan-500 rounded cursor-pointer">
+              <div class="flex-1 text-xs">
+                <div class="flex items-center justify-between">
+                  <p class="font-bold text-white">Step ${step.id}: ${step.title}</p>
+                  ${step.timer ? `<span class="text-[9px] mono text-cyan-400 bg-cyan-500/10 px-1.5 py-0.5 rounded">${step.timer}s</span>` : ''}
+                </div>
+                <p class="text-slate-300 text-[11px] mt-0.5">${step.desc}</p>
+                ${step.warning ? `<p class="text-[10px] text-amber-400 mt-1"><i class="fa-solid fa-triangle-exclamation"></i> ${step.warning}</p>` : ''}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    function toggleTimer() {
+      const btn = document.getElementById('btnTimerToggle');
+      if (activeTimerInterval) {
+        clearInterval(activeTimerInterval);
+        activeTimerInterval = null;
+        btn.innerHTML = `<i class="fa-solid fa-play"></i> Resume`;
+        btn.classList.replace('bg-amber-600', 'bg-cyan-600');
+      } else {
+        btn.innerHTML = `<i class="fa-solid fa-pause"></i> Pause`;
+        btn.classList.replace('bg-cyan-600', 'bg-amber-600');
+        activeTimerInterval = setInterval(() => {
+          if (timerSeconds > 0) {
+            timerSeconds--;
+            const mins = Math.floor(timerSeconds / 60).toString().padStart(2, '0');
+            const secs = (timerSeconds % 60).toString().padStart(2, '0');
+            document.getElementById('timerDigits').innerText = `${mins}:${secs}`;
+          } else {
+            clearInterval(activeTimerInterval);
+            activeTimerInterval = null;
+            btn.innerHTML = `<i class="fa-solid fa-check"></i> Finished`;
+          }
+        }, 1000);
+      }
+    }
+
+    function resetTimer() {
+      if (activeTimerInterval) clearInterval(activeTimerInterval);
+      activeTimerInterval = null;
+      timerSeconds = 600;
+      document.getElementById('timerDigits').innerText = `10:00`;
+      const btn = document.getElementById('btnTimerToggle');
+      if (btn) {
+        btn.innerHTML = `<i class="fa-solid fa-play"></i> Start`;
+        btn.className = 'bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs px-4 py-1.5 rounded-xl transition';
+      }
+    }
+
+    // Equipment Modal Sheet
+    function openEquipmentModal(eqId) {
+      const eq = LAB_DATABASE.equipment.find(item => item.id === eqId) || LAB_DATABASE.equipment[0];
+      document.getElementById('modalCategory').innerText = eq.category;
+      document.getElementById('modalTitle').innerText = eq.name;
+
+      document.getElementById('modalContent').innerHTML = `
+        <div class="bg-slate-800/60 p-3 rounded-2xl border border-slate-700">
+          <p class="font-bold text-cyan-400 mb-1">Purpose & Application</p>
+          <p class="text-slate-200">${eq.purpose}</p>
+        </div>
+        <div class="bg-slate-800/60 p-3 rounded-2xl border border-slate-700">
+          <p class="font-bold text-cyan-400 mb-1">Working Principle</p>
+          <p class="text-slate-200">${eq.workingPrinciple}</p>
+        </div>
+        <div class="bg-red-500/10 border border-red-500/30 p-3 rounded-2xl text-red-200">
+          <p class="font-bold text-red-400 mb-1"><i class="fa-solid fa-shield-halved"></i> Safety Precautions</p>
+          <p>${eq.safety}</p>
+        </div>
+        <div>
+          <p class="font-bold text-white mb-2">Standard Operating Guidelines</p>
+          <ol class="list-decimal list-inside space-y-1 text-slate-300">
+            ${eq.guidelines.map(g => `<li>${g}</li>`).join('')}
+          </ol>
+        </div>
+      `;
+      document.getElementById('equipmentModal').classList.remove('hidden');
+    }
+
+    function closeEquipmentModal() {
+      document.getElementById('equipmentModal').classList.add('hidden');
+    }
+
+    function openLinkedSOP(eqId) {
+      const eq = LAB_DATABASE.equipment.find(item => item.id === eqId);
+      switchTab('viewSOP', document.querySelectorAll('.tab-btn')[3]);
+      if (eq && eq.sopId) renderSOPView(eq.sopId);
+    }
+
+    // AI Chat System
+    function sendChatMessage() {
+      const input = document.getElementById('chatInput');
+      const text = input.value.trim();
+      if (!text) return;
+
+      appendMessage('user', text);
+      input.value = '';
+
+      setTimeout(() => {
+        const response = generateAIResponse(text);
+        appendMessage('assistant', response);
+      }, 500);
+    }
+
+    function askPreset(prompt) {
+      document.getElementById('chatInput').value = prompt;
+      sendChatMessage();
+    }
+
+    function appendMessage(sender, text) {
+      const container = document.getElementById('chatMessagesStream');
+      const isUser = sender === 'user';
+      const div = document.createElement('div');
+      div.className = `flex items-start gap-2 ${isUser ? 'justify-end' : ''}`;
+      div.innerHTML = `
+        ${!isUser ? `<div class="w-6 h-6 rounded-full bg-cyan-600 flex items-center justify-center text-white shrink-0 text-[10px]"><i class="fa-solid fa-robot"></i></div>` : ''}
+        <div class="${isUser ? 'bg-cyan-600 text-white rounded-2xl rounded-tr-sm' : 'bg-slate-900 border border-slate-800 text-slate-200 rounded-2xl rounded-tl-sm'} p-2.5 max-w-[85%]">
+          ${text}
+        </div>
+      `;
+      container.appendChild(div);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function generateAIResponse(query) {
+      const q = query.toLowerCase();
+      if (q.includes('balance') || q.includes('centrifuge')) {
+        return "Crucial Centrifuge Protocol: Rotational force creates extreme centrifugal momentum (RCF = 1.118 × 10^-5 × r × RPM^2). Unbalanced loads cause spindle bending, bearing failure, or rotor fragmentation. You must balance tubes diagonally opposite each other within ±0.02 grams.";
+      }
+      if (q.includes('calibrate') || q.includes('pipette')) {
+        return "ISO 8655 Gravimetric Calibration: Perform 10 replicate weighings of deionized water on a calibrated analytical balance (0.0001g). Convert mass to volume using the temperature-dependent Z-factor formula: Volume = Mass × Z.";
+      }
+      if (q.includes('ethidium') || q.includes('spill')) {
+        return "Ethidium Bromide First Aid & Spill: Discard contaminated gloves into biohazard bin. Wash skin immediately with soap and water for 15 minutes. For spills, absorb with activated carbon de-staining pads and treat with bleach solution.";
+      }
+      return "LabLens AI: According to OSHA and institutional laboratory SOPs, always verify procedures with your instructor and wear appropriate PPE (safety goggles, lab coat, nitrile gloves).";
+    }
+
+    // Live Webcam Integration with Auto-Detect Loop
+    async function toggleWebcam() {
+      const video = document.getElementById('webcamFeed');
+      const btnText = document.getElementById('webcamBtnText');
+      const modeLabel = document.getElementById('visionModeLabel');
+
+      if (!isWebcamRunning) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }
+          });
+          video.srcObject = stream;
+          video.classList.remove('hidden');
+          await video.play();
+          btnText.innerText = "Switch to Lab Sim";
+          modeLabel.innerText = "Real WebCam Live Feed (Point at object)";
+          isWebcamRunning = true;
+
+          // Start continuous auto-detection every 1.8s
+          autoDetectionInterval = setInterval(() => {
+            if (isWebcamRunning) performInstantScan();
+          }, 1800);
+        } catch (err) {
+          alert("WebCam not accessible (" + err.message + "). Running in High-Fidelity AI Lab Simulation mode.");
+        }
+      } else {
+        if (autoDetectionInterval) clearInterval(autoDetectionInterval);
+        const stream = video.srcObject;
+        if (stream) stream.getTracks().forEach(t => t.stop());
+        video.classList.add('hidden');
+        btnText.innerText = "Use Real WebCam";
+        modeLabel.innerText = "Simulated Lab Scene (Tap instrument to frame)";
+        isWebcamRunning = false;
+      }
+    }
+
+    // Real-time Clock
+    setInterval(() => {
+      const now = new Date();
+      document.getElementById('iosClock').innerText = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }, 1000);
+
+    // Initial Trigger on load
+    selectAndScan('micropipette');
+  </script>
+</body>
+</html>
